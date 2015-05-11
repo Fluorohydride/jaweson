@@ -1,7 +1,7 @@
 #ifndef _JAWESON_H_
 #define _JAWESON_H_
 
-// version 0.2
+// version 0.3
 // sample code:
 //    jaweson::JsonRoot<> root;
 //    if(!root.parse(buffer, len)) {
@@ -13,7 +13,7 @@
 //        root["nodename"].set_value<jaweson::JsonString>("teststring");
 //        std::cout << root.get_string() << std::endl;
 //    }
-// the parser uses a simple mempool in default which can be replaced with a custom allocator easily.
+// the parser uses a simple allocator in default which can be replaced with a custom allocator easily.
 
 #include <iostream>
 #include <vector>
@@ -53,57 +53,13 @@ namespace jaweson
 #define TOKEN_EOF_FLAG       0x1000
 #define TOKEN_ALLVALUE_FLAG  0x3ea
     
-    template<typename T>
-    class MempoolAllocator {
-    protected:
-        struct ObjectNode {
-            T value;
-            ObjectNode* next;
-        };
+    class DefaultAllocator {
     public:
-        ~MempoolAllocator() { for(auto& iter : blocks) free(iter); }
-        template<typename... TR>
-        inline T* alloc(TR&&... params) {
-            if(node_head == nullptr) {
-                ObjectNode* new_block = static_cast<ObjectNode*>(malloc(sizeof(ObjectNode) * alloc_size));
-                node_head = new_block;
-                blocks.push_back(new_block);
-                for(int32_t i = 0; i < alloc_size - 1; ++i) {
-                    ObjectNode* cur_obj = new_block++;
-                    cur_obj->next = new_block;
-                }
-                new_block->next = nullptr;
-                alloc_size *= 2;
-            }
-            T* ptr = new(node_head) T(std::forward<TR>(params)...);
-            node_head = node_head->next;
-            return ptr;
-        }
-        inline void recycle(T *obj) {
-            obj->~T();
-            if(node_head == nullptr) {
-                node_head = reinterpret_cast<ObjectNode*>(obj);
-                node_head->next = nullptr;
-            } else {
-                ObjectNode* cur = reinterpret_cast<ObjectNode*>(obj);
-                cur->next = node_head;
-                node_head = cur;
-            }
-        }
-    protected:
-        int32_t alloc_size = 32;
-        ObjectNode* node_head = nullptr;
-        std::vector<void*> blocks;
-    };
-    
-    template<template<typename> class ALLOC_TYPE>
-    class Allocator {
-    public:
+        template<typename T, typename... TR >
+        static inline T* alloc(TR&&... params) { return new T(std::forward<TR>(params)...); }
+        
         template<typename T>
-        static inline ALLOC_TYPE<T>& get_allocator() {
-            static ALLOC_TYPE<T> allocator;
-            return allocator;
-        }
+        static inline void recycle(T* obj) { delete obj; }
     };
     
     class JsonUtil {
@@ -213,10 +169,10 @@ namespace jaweson
         }
     };
     
-    template<template<typename> class ALLOC_TYPE>
+    template<typename ALLOC_TYPE>
     class JsonNode;
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonValue {
     public:
         JsonValue() {};
@@ -230,6 +186,7 @@ namespace jaweson
         virtual bool is_empty() { return false; }
         virtual int64_t to_integer() { return 0; }
         virtual double to_double() { return 0.0; }
+        virtual bool to_bool() { return false; }
         virtual std::string to_string() { return ""; }
         virtual JsonNode<ALLOC_TYPE>& operator [] (const std::string& key);
         virtual JsonNode<ALLOC_TYPE>& operator [] (int32_t index);
@@ -248,7 +205,7 @@ namespace jaweson
         JsonValue(const JsonValue&){};
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonDouble : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonDouble(double value) : ref_value(value) {}
@@ -260,14 +217,14 @@ namespace jaweson
             sprintf(buffer, "%.9le", ref_value);
             str.append(buffer);
         }
-        virtual JsonValue<ALLOC_TYPE>* clone() { return Allocator<ALLOC_TYPE>::template get_allocator<JsonDouble>().alloc(ref_value); }
-        virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonDouble>().recycle(this); }
-        static inline JsonDouble<ALLOC_TYPE>* create(double val) { return Allocator<ALLOC_TYPE>::template get_allocator<JsonDouble>().alloc(val); }
+        virtual JsonValue<ALLOC_TYPE>* clone() { return ALLOC_TYPE::template alloc<JsonDouble>(ref_value); }
+        virtual void free() { ALLOC_TYPE::template recycle(this); }
+        static inline JsonDouble<ALLOC_TYPE>* create(double val) { return ALLOC_TYPE::template alloc<JsonDouble>(val); }
     protected:
         double ref_value = 0.0;
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonInteger : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonInteger(int64_t value) : ref_value(value) {}
@@ -279,14 +236,14 @@ namespace jaweson
             sprintf(buffer, "%lld", ref_value);
             str.append(buffer);
         }
-        virtual JsonValue<ALLOC_TYPE>* clone() { return Allocator<ALLOC_TYPE>::template get_allocator<JsonInteger>().alloc(ref_value); }
-        virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonInteger>().recycle(this); }
-        static inline JsonInteger<ALLOC_TYPE>* create(int64_t val) { return Allocator<ALLOC_TYPE>::template get_allocator<JsonInteger>().alloc(val); }
+        virtual JsonValue<ALLOC_TYPE>* clone() { return ALLOC_TYPE::template alloc<JsonInteger>(ref_value); }
+        virtual void free() { ALLOC_TYPE::template recycle(this); }
+        static inline JsonInteger<ALLOC_TYPE>* create(int64_t val) { return ALLOC_TYPE::template alloc<JsonInteger>(val); }
     protected:
         int64_t ref_value = 0;
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonString : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonString(const std::string& value) : ref_value(value) {}
@@ -298,15 +255,15 @@ namespace jaweson
             str.append(JsonUtil::raw_string_to_text(ref_value));
             str.push_back('\"');
         }
-        virtual JsonValue<ALLOC_TYPE>* clone() { return Allocator<ALLOC_TYPE>::template get_allocator<JsonString>().alloc(ref_value); }
-        virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonString>().recycle(this); }
-        static inline JsonString<ALLOC_TYPE>* create(const std::string& val) { return Allocator<ALLOC_TYPE>::template get_allocator<JsonString>().alloc(val); }
-        static inline JsonString<ALLOC_TYPE>* create(std::string&& val) { return Allocator<ALLOC_TYPE>::template get_allocator<JsonString>().alloc(val); }
+        virtual JsonValue<ALLOC_TYPE>* clone() { return ALLOC_TYPE::template alloc<JsonString>(ref_value); }
+        virtual void free() { ALLOC_TYPE::template recycle(this); }
+        static inline JsonString<ALLOC_TYPE>* create(const std::string& val) { return ALLOC_TYPE::template alloc<JsonString>(val); }
+        static inline JsonString<ALLOC_TYPE>* create(std::string&& val) { return ALLOC_TYPE::template alloc<JsonString>(std::move(val)); }
     protected:
         std::string ref_value;
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonBool : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonBool(bool value) : ref_value(value) {}
@@ -326,7 +283,7 @@ namespace jaweson
         bool ref_value = 0;
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonNull : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonNull() {}
@@ -342,7 +299,7 @@ namespace jaweson
         }
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonNode {
     public:
         inline JsonNode(JsonValue<ALLOC_TYPE>* value) { ref_value = value; }
@@ -358,6 +315,7 @@ namespace jaweson
         inline bool is_empty() { return ref_value->is_empty(); }
         inline int64_t to_integer() { return ref_value->to_integer(); }
         inline double to_double() { return ref_value->to_double(); }
+        virtual bool to_bool() { return ref_value->to_bool(); }
         inline std::string to_string() { return ref_value->to_string(); }
         inline JsonNode<ALLOC_TYPE>& operator [] (const std::string& key) { return (*ref_value)[key]; }
         inline JsonNode<ALLOC_TYPE>& operator [] (int32_t index) { return (*ref_value)[index]; }
@@ -387,7 +345,7 @@ namespace jaweson
                 ref_value->free();
             ref_value = node.clone();
         }
-        template<template<template<typename> class> class VALUE_TYPE, typename... TR>
+        template<template<typename> class VALUE_TYPE, typename... TR>
         inline void set_value(TR&&... params) {
             if(ref_value->is_empty()) return;
             if(ref_value != nullptr)
@@ -398,7 +356,7 @@ namespace jaweson
         JsonValue<ALLOC_TYPE>* ref_value = nullptr;
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonEmptyNode : public JsonNode<ALLOC_TYPE> {
     public:
         virtual void free() {}
@@ -420,17 +378,17 @@ namespace jaweson
         };
     };
     
-    template<template<typename> class ALLOC_TYPE>
+    template<typename ALLOC_TYPE>
     JsonNode<ALLOC_TYPE>& JsonValue<ALLOC_TYPE>::operator [] (const std::string& key) {
         return JsonEmptyNode<ALLOC_TYPE>::Get();
     }
     
-    template<template<typename> class ALLOC_TYPE>
+    template<typename ALLOC_TYPE>
     JsonNode<ALLOC_TYPE>& JsonValue<ALLOC_TYPE>::operator [] (int32_t index) {
         return JsonEmptyNode<ALLOC_TYPE>::Get();
     }
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonObject : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonObject() { values.reserve(16); }
@@ -447,7 +405,7 @@ namespace jaweson
             if(iter == indices.end()) {
                 std::string inner_key = key;
                 auto null_value = JsonNull<ALLOC_TYPE>::create();
-                values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeObject>().alloc(inner_key, null_value));
+                values.push_back(ALLOC_TYPE::template alloc<JsonNodeObject>(inner_key, null_value));
                 return *values.back();
             } else
                 return *values[iter->second];
@@ -459,13 +417,13 @@ namespace jaweson
                 if(iter == indices.end()) {
                     std::string inner_key = key;
                     auto null_value = JsonNull<ALLOC_TYPE>::create();
-                    values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeObject>().alloc(inner_key, null_value));
+                    values.push_back(ALLOC_TYPE::template alloc<JsonNodeObject>(inner_key, null_value));
                     indices[key] = values.size() - 1;
                 } else
                     return false;
             } else {
                 std::string inner_key = key;
-                values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeObject>().alloc(inner_key, value));
+                values.push_back(ALLOC_TYPE::template alloc<JsonNodeObject>(inner_key, value));
             }
             return true;
         }
@@ -507,17 +465,17 @@ namespace jaweson
         }
         
         virtual JsonValue<ALLOC_TYPE>* clone() {
-            JsonObject<ALLOC_TYPE>* obj = Allocator<ALLOC_TYPE>::template get_allocator<JsonObject>().alloc();
+            JsonObject<ALLOC_TYPE>* obj = ALLOC_TYPE::template alloc<JsonObject>();
             for(auto& iter : values)
                 if(iter)
                     obj->insert(iter->ref_key, iter->clone());
             return obj;
         }
-        virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonObject>().recycle(this); }
-        static JsonObject<ALLOC_TYPE>* create() { Allocator<ALLOC_TYPE>::template get_allocator<JsonObject<ALLOC_TYPE>>().alloc(); }
+        virtual void free() { ALLOC_TYPE::template recycle(this); }
+        static JsonObject<ALLOC_TYPE>* create() { return ALLOC_TYPE::template alloc<JsonObject>(); }
         
         inline void reserve_value(std::string& key) {
-            values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeObject>().alloc(key, nullptr));
+            values.push_back(ALLOC_TYPE::template alloc<JsonNodeObject>(key, nullptr));
         }
         
         inline void fulfill_value(JsonValue<ALLOC_TYPE>* value) {
@@ -525,14 +483,14 @@ namespace jaweson
         }
         
         inline void init(std::string& key, JsonValue<ALLOC_TYPE>* value) {
-            values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeObject>().alloc(key, value));
+            values.push_back(ALLOC_TYPE::template alloc<JsonNodeObject>(key, value));
         }
         
     protected:
         class JsonNodeObject : public JsonNode<ALLOC_TYPE> {
         public:
             inline JsonNodeObject(std::string& key, JsonValue<ALLOC_TYPE>* val = nullptr) : JsonNode<ALLOC_TYPE>(val), ref_key(std::move(key)) {}
-            virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeObject>().recycle(this); }
+            virtual void free() { ALLOC_TYPE::template recycle(this); }
             
             inline void set_value(JsonValue<ALLOC_TYPE>* value) {
                 if(JsonNode<ALLOC_TYPE>::ref_value)
@@ -556,7 +514,7 @@ namespace jaweson
         
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonArray : public JsonValue<ALLOC_TYPE> {
     public:
         inline JsonArray() { values.reserve(16); }
@@ -571,7 +529,7 @@ namespace jaweson
             return *values[index];
         }
         virtual bool insert(JsonValue<ALLOC_TYPE>* value) {
-            values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeArray>().alloc(value));
+            values.push_back(ALLOC_TYPE::template alloc<JsonNodeArray>(value));
             return true;
         }
         
@@ -602,24 +560,24 @@ namespace jaweson
         }
         
         virtual JsonValue<ALLOC_TYPE>* clone() {
-            JsonArray<ALLOC_TYPE>* obj = Allocator<ALLOC_TYPE>::template get_allocator<JsonArray<ALLOC_TYPE>>().alloc();
+            JsonArray<ALLOC_TYPE>* obj = ALLOC_TYPE::template alloc<JsonArray>();
             for(auto& iter : values)
-                obj->values.push_back(Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeArray>().alloc(iter->clone()));
+                obj->values.push_back(ALLOC_TYPE::template alloc<JsonNodeArray>(iter->clone()));
             return obj;
         }
-        virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonArray<ALLOC_TYPE>>().recycle(this); }
-        static JsonArray<ALLOC_TYPE>* create() { Allocator<ALLOC_TYPE>::template get_allocator<JsonArray<ALLOC_TYPE>>().alloc(); }
+        virtual void free() { ALLOC_TYPE::template recycle(this); }
+        static JsonArray<ALLOC_TYPE>* create() { return ALLOC_TYPE::template alloc<JsonArray>(); }
         
     protected:
         class JsonNodeArray : public JsonNode<ALLOC_TYPE> {
         public:
             JsonNodeArray(JsonValue<ALLOC_TYPE>* val = nullptr) : JsonNode<ALLOC_TYPE>(val) {}
-            virtual void free() { Allocator<ALLOC_TYPE>::template get_allocator<JsonNodeArray>().recycle(this); }
+            virtual void free() { ALLOC_TYPE::template recycle(this); }
         };
         std::vector<JsonNodeArray*> values;
     };
     
-    template<template<typename> class ALLOC_TYPE = MempoolAllocator>
+    template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonRoot : public JsonNode<ALLOC_TYPE> {
     public:
         JsonRoot() : JsonNode<ALLOC_TYPE>(nullptr) {}
@@ -819,16 +777,16 @@ namespace jaweson
                         double_value = -double_value;
                 }
                 if(is_integer)
-                    return Allocator<ALLOC_TYPE>::template get_allocator<JsonInteger<ALLOC_TYPE>>().alloc(int_value);
+                    return JsonInteger<ALLOC_TYPE>::create(int_value);
                 else
-                    return Allocator<ALLOC_TYPE>::template get_allocator<JsonDouble<ALLOC_TYPE>>().alloc(double_value);
+                    return JsonDouble<ALLOC_TYPE>::create(double_value);
             }
             
             JsonValue<ALLOC_TYPE>* parse_string() {
                 cur_ptr++;
                 std::string str;
                 if(parse_string(str))
-                    return Allocator<ALLOC_TYPE>::template get_allocator<JsonString<ALLOC_TYPE>>().alloc(std::move(str));
+                    return JsonString<ALLOC_TYPE>::create(std::move(str));
                 return nullptr;
             }
             
@@ -907,7 +865,7 @@ namespace jaweson
             JsonValue<ALLOC_TYPE>* parse_object() {
                 cur_ptr++;
                 uint32_t token_type = check_next_token();
-                JsonObject<ALLOC_TYPE>* obj = Allocator<ALLOC_TYPE>::template get_allocator<JsonObject<ALLOC_TYPE>>().alloc();
+                JsonObject<ALLOC_TYPE>* obj = JsonObject<ALLOC_TYPE>::create();
                 if(token_type == TOKEN_RBRACE) {
                     cur_ptr++;
                     return obj;
@@ -956,7 +914,7 @@ namespace jaweson
             JsonValue<ALLOC_TYPE>* parse_array() {
                 cur_ptr++;
                 int32_t token_type = check_next_token();
-                JsonArray<ALLOC_TYPE>* obj = Allocator<ALLOC_TYPE>::template get_allocator<JsonArray<ALLOC_TYPE>>().alloc();
+                JsonArray<ALLOC_TYPE>* obj = JsonArray<ALLOC_TYPE>::create();
                 if(token_type == TOKEN_RBRACKET) {
                     cur_ptr++;
                     return obj;
