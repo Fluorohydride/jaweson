@@ -302,6 +302,7 @@ namespace jaweson
     template<typename ALLOC_TYPE = DefaultAllocator>
     class JsonNode {
     public:
+        JsonNode(const JsonNode&) = delete;
         inline JsonNode(JsonValue<ALLOC_TYPE>* value) { ref_value = value; }
         virtual ~JsonNode() { if(ref_value) ref_value->free(); }
         virtual void free() = 0;
