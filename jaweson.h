@@ -187,7 +187,7 @@ namespace jaweson
         virtual int64_t to_integer() { return 0; }
         virtual double to_double() { return 0.0; }
         virtual bool to_bool() { return false; }
-        virtual std::string to_string() { return ""; }
+        virtual const std::string& to_string() { return ""; }
         virtual JsonNode<ALLOC_TYPE>& operator [] (const std::string& key);
         virtual JsonNode<ALLOC_TYPE>& operator [] (int32_t index);
         virtual bool insert(const std::string& key, JsonValue<ALLOC_TYPE>* value) { return false; }
@@ -249,7 +249,7 @@ namespace jaweson
         inline JsonString(const std::string& value) : ref_value(value) {}
         inline JsonString(std::string&& value) : ref_value(std::move(value)) {}
         inline virtual bool is_string() { return true; }
-        inline virtual std::string to_string() { return ref_value; }
+        inline virtual const std::string& to_string() { return ref_value; }
         virtual void push_string(std::string& str) {
             str.push_back('\"');
             str.append(JsonUtil::raw_string_to_text(ref_value));
@@ -317,7 +317,7 @@ namespace jaweson
         inline int64_t to_integer() { return ref_value->to_integer(); }
         inline double to_double() { return ref_value->to_double(); }
         virtual bool to_bool() { return ref_value->to_bool(); }
-        inline std::string to_string() { return ref_value->to_string(); }
+        inline const std::string& to_string() { return ref_value->to_string(); }
         inline JsonNode<ALLOC_TYPE>& operator [] (const std::string& key) { return (*ref_value)[key]; }
         inline JsonNode<ALLOC_TYPE>& operator [] (int32_t index) { return (*ref_value)[index]; }
         inline bool insert(const std::string& key, JsonValue<ALLOC_TYPE>* value) { return ref_value->insert(key, value); }
@@ -419,7 +419,7 @@ namespace jaweson
                     std::string inner_key = key;
                     auto null_value = JsonNull<ALLOC_TYPE>::create();
                     values.push_back(ALLOC_TYPE::template alloc<JsonNodeObject>(inner_key, null_value));
-                    indices[key] = values.size() - 1;
+                    indices[key] = (int32_t)values.size() - 1;
                 } else
                     return false;
             } else {
@@ -545,7 +545,7 @@ namespace jaweson
             if(!fun)
                 return;
             for(size_t i = 0; i < values.size(); ++i)
-                fun(i, *values[i]);
+                fun((int32_t)i, *values[i]);
         }
         
         virtual size_t size() { return values.size(); }
@@ -588,11 +588,11 @@ namespace jaweson
             JsonParseStatus status;
             error_pos = 0;
             error_msg.clear();
-            if(status.parse(text, len)) {
+            if(status.parse(text, (int32_t)len)) {
                 JsonNode<ALLOC_TYPE>::ref_value = status.ret_value;
                 return true;
             } else {
-                error_pos = status.cur_ptr - status.begin_ptr;
+                error_pos = (int32_t)(status.cur_ptr - status.begin_ptr);
                 error_msg = status.error_msg;
                 return false;
             }
