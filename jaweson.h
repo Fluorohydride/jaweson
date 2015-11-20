@@ -1076,7 +1076,7 @@ namespace jaweson
         std::string* stringptr = nullptr;
     };
     
-    std::ostream& operator << (std::ostream& stream, JsonNode<>& node) {
+    inline std::ostream& operator << (std::ostream& stream, JsonNode<>& node) {
         JsonStreamWriter<> writer(stream);
         node.write_to(writer);
         return stream;
